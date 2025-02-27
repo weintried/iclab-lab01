@@ -1,0 +1,69 @@
+# 忽略模擬輸出
+*.fsdb
+*.vpd
+*.vcd
+*.log
+*.key
+*.history
+*.rc
+*.conf
+*.syn
+*.svf
+*.pvl
+*.mr
+
+# 忽略合成、APR 產生的檔案
+*.ddc
+*.sdf
+*.sdc
+*.sdf.X
+*.gds
+*.lef
+*.def
+*.lib
+*.spef
+*.pwl
+*.capTbl
+*.map
+
+# 忽略 Verilog 編譯暫存檔
+simv*
+csrc/
+xcelium.d/
+INCA_libs/
+alib-52/
+xrun.history
+*.so
+
+# 忽略 Design Compiler、PrimeTime、Innovus 產物
+Netlist/*
+Report/*
+timingReports/*
+extLogDir/
+StreamOut/
+DBS/
+*.rpt
+*.log
+
+# 忽略 verdi / nWave 產生的檔案
+nWaveLog/
+verdiLog/
+*.vcs.*
+
+# 忽略 make clean 產生的刪除目標
+*.o
+*.bin
+*.chk
+*.globals
+checkDesign/
+
+# 忽略 system 相關檔案
+.DS_Store
+Thumbs.db
+
+# 確保不忽略 Verilog 代碼
+!*.v
+!*.sv
+!*.f
+!*.tcl
+!makefile
