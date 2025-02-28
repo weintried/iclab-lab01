@@ -1,346 +1,646 @@
 module HF(
-    // Input signals
     input [24:0] symbol_freq,
-    // Output signals
-    output reg [19:0] out_encoded
+    output [19:0] out_encoded
 );
 
-///////////////////////////////////////////////////////////////////////////////
-// 1) We will treat each symbol/node as follows:
-//    - freq[node] = frequency of this node (up to 8 bits, since sums can exceed 5 bits).
-//    - left[node], right[node]: children indices (15 => no child).
-//    - symbol_id[node]: which leaf symbol it corresponds to if it's a leaf (0..4 for a..e),
-//                       or 7 if it's an internal node.
-//    - active[node]: indicates whether this node is in the "priority queue" for merging.
-//
-//    We'll have up to 9 nodes total:
-//      node 0..4 => the 5 leaves (a..e),
-//      node 5..8 => internal nodes formed by merging.
-//
-// 2) Build the Huffman tree by repeatedly merging the two smallest active nodes:
-//    - If tie in freq, pick the node whose "lowest leaf symbol" is smaller in alphabetical order.
-//    - The "higher-priority" node goes to the left (bit=0), the lower-priority node to the right (bit=1).
-//
-// 3) After building node 8 (the final root), we do a DFS to find each leaf’s path
-//    and produce a 4-bit code (left-padded with 0 if shorter).
-///////////////////////////////////////////////////////////////////////////////
+    // Extract frequencies for each symbol
+    wire [4:0] freq_a = symbol_freq[24:20];
+    wire [4:0] freq_b = symbol_freq[19:15];
+    wire [4:0] freq_c = symbol_freq[14:10];
+    wire [4:0] freq_d = symbol_freq[9:5];
+    wire [4:0] freq_e = symbol_freq[4:0];
 
-//
-// We need small helper functions/tasks.
-//
-integer i;  // used in always block
+    // Declare wires for nodes of the Huffman tree
+    // We'll have 5 original symbols and 4 merged nodes
+    // Extended to 8 bits to prevent overflow when adding frequencies
+    // wire [7:0] freq_node6, freq_node7, freq_node8, freq_node9;       # FIXME: freq_node9 is not used
+    wire [7:0] freq_node6, freq_node7, freq_node8;
+    wire [3:0] code_a, code_b, code_c, code_d, code_e;
+    wire [3:0] len_a, len_b, len_c, len_d, len_e;
 
-// Arrays to store node data (indexed 0..8).
-// freq can go up to ~155 in worst case (e.g., sum of all 31s), so use 8 or 9 bits.
-reg [7:0] freq   [0:8];
-reg [3:0] left   [0:8];
-reg [3:0] right  [0:8];
-reg [2:0] symbol [0:8];  // 0..4 => a..e for leaves, 7 => internal
-reg       active [0:8];  // 1 => node is active in the priority queue
+    // Wires for node structure (for tracking the tree)
+    wire [8:0] node6_children, node7_children, node8_children, node9_children;
+    
+    // Wires for tracking which nodes exist in each step
+    wire [8:0] available_nodes_step1;
+    wire [8:0] available_nodes_step2;
+    wire [8:0] available_nodes_step3;
+    wire [8:0] available_nodes_step4;
+    
+    // Initial available nodes (only the 5 original symbols)
+    assign available_nodes_step1 = 9'b000011111;
 
-// Return the lowest symbol (0..4) found in the subtree rooted at `nd`.
-// If nd < 5, it's a leaf with symbol[nd]. If nd >=5, it’s internal, so check children.
-function [2:0] getLowestLeafSymbol;
-   input [3:0] nd;
-begin
-   if (nd < 5) begin
-       // Leaf node
-       getLowestLeafSymbol = symbol[nd]; 
-   end
-   else begin
-       // Internal node
-       // Recursively compare children
-       if (left[nd] == 4'hF && right[nd] == 4'hF) begin
-           // Should never happen for a valid internal node, but just in case
-           getLowestLeafSymbol = 3'd7; 
-       end
-       else if (right[nd] == 4'hF) begin
-           // Only a left child
-           getLowestLeafSymbol = getLowestLeafSymbol(left[nd]);
-       end
-       else if (left[nd] == 4'hF) begin
-           // Only a right child
-           getLowestLeafSymbol = getLowestLeafSymbol(right[nd]);
-       end
-       else begin
-           // Both children exist, pick the smaller of the two
-           reg [2:0] lsymL, lsymR;
-           lsymL = getLowestLeafSymbol(left[nd]);
-           lsymR = getLowestLeafSymbol(right[nd]);
-           getLowestLeafSymbol = (lsymL < lsymR) ? lsymL : lsymR;
-       end
-   end
-end
-endfunction
+    // Step 1: Find the two nodes with smallest frequencies among original symbols
+    wire [8:0] smallest_nodes_step1;
+    wire [4:0] smallest_freq_step1, second_smallest_freq_step1;
+    wire [3:0] smallest_idx_step1, second_smallest_idx_step1;
+    
+    // Compare frequencies with tie-breaking rules
+    // For original symbols with same frequency, order alphabetically (a-e)
+    wire a_lt_b = (freq_a < freq_b) || (freq_a == freq_b && 1'b1);
+    wire a_lt_c = (freq_a < freq_c) || (freq_a == freq_c && 1'b1);
+    wire a_lt_d = (freq_a < freq_d) || (freq_a == freq_d && 1'b1);
+    wire a_lt_e = (freq_a < freq_e) || (freq_a == freq_e && 1'b1);
+    
+    wire b_lt_c = (freq_b < freq_c) || (freq_b == freq_c && 1'b1);
+    wire b_lt_d = (freq_b < freq_d) || (freq_b == freq_d && 1'b1);
+    wire b_lt_e = (freq_b < freq_e) || (freq_b == freq_e && 1'b1);
+    
+    wire c_lt_d = (freq_c < freq_d) || (freq_c == freq_d && 1'b1);
+    wire c_lt_e = (freq_c < freq_e) || (freq_c == freq_e && 1'b1);
+    
+    wire d_lt_e = (freq_d < freq_e) || (freq_d == freq_e && 1'b1);
+    
+    // Count how many other symbols each symbol is less than
+    wire [2:0] a_rank = a_lt_b + a_lt_c + a_lt_d + a_lt_e;
+    wire [2:0] b_rank = b_lt_c + b_lt_d + b_lt_e + !a_lt_b;
+    wire [2:0] c_rank = c_lt_d + c_lt_e + !a_lt_c + !b_lt_c;
+    wire [2:0] d_rank = d_lt_e + !a_lt_d + !b_lt_d + !c_lt_d;
+    wire [2:0] e_rank = !a_lt_e + !b_lt_e + !c_lt_e + !d_lt_e;
+    
+    // Find the two smallest frequencies in step 1
+    assign smallest_idx_step1 = (a_rank == 4) ? 4'd0 :
+                               (b_rank == 4) ? 4'd1 :
+                               (c_rank == 4) ? 4'd2 :
+                               (d_rank == 4) ? 4'd3 : 4'd4;
+                               
+    assign second_smallest_idx_step1 = (a_rank == 3) ? 4'd0 :
+                                      (b_rank == 3) ? 4'd1 :
+                                      (c_rank == 3) ? 4'd2 :
+                                      (d_rank == 3) ? 4'd3 : 4'd4;
+    
+    assign smallest_freq_step1 = (smallest_idx_step1 == 4'd0) ? freq_a :
+                                (smallest_idx_step1 == 4'd1) ? freq_b :
+                                (smallest_idx_step1 == 4'd2) ? freq_c :
+                                (smallest_idx_step1 == 4'd3) ? freq_d : freq_e;
+                                
+    assign second_smallest_freq_step1 = (second_smallest_idx_step1 == 4'd0) ? freq_a :
+                                       (second_smallest_idx_step1 == 4'd1) ? freq_b :
+                                       (second_smallest_idx_step1 == 4'd2) ? freq_c :
+                                       (second_smallest_idx_step1 == 4'd3) ? freq_d : freq_e;
+    
+    // Track which nodes were selected in step 1
+    assign smallest_nodes_step1[0] = (smallest_idx_step1 == 4'd0) || (second_smallest_idx_step1 == 4'd0);
+    assign smallest_nodes_step1[1] = (smallest_idx_step1 == 4'd1) || (second_smallest_idx_step1 == 4'd1);
+    assign smallest_nodes_step1[2] = (smallest_idx_step1 == 4'd2) || (second_smallest_idx_step1 == 4'd2);
+    assign smallest_nodes_step1[3] = (smallest_idx_step1 == 4'd3) || (second_smallest_idx_step1 == 4'd3);
+    assign smallest_nodes_step1[4] = (smallest_idx_step1 == 4'd4) || (second_smallest_idx_step1 == 4'd4);
+    assign smallest_nodes_step1[8:5] = 4'b0000;  // No merged nodes available yet
+    
+    // Merge the two smallest nodes to create node 6 (with proper bit extension)
+    assign freq_node6 = {3'b000, smallest_freq_step1} + {3'b000, second_smallest_freq_step1};
+    
+    // Store the children of node 6
+    assign node6_children = smallest_nodes_step1;
+    
+    // Update available nodes for step 2
+    assign available_nodes_step2 = (available_nodes_step1 & ~smallest_nodes_step1) | 9'b000100000;
+    
+    // Step 2: Find the two smallest frequencies among remaining nodes
+    wire [8:0] smallest_nodes_step2;
+    wire [7:0] smallest_freq_step2, second_smallest_freq_step2;
+    wire [3:0] smallest_idx_step2, second_smallest_idx_step2;
+    
+    // Compare node 6 with remaining original nodes (with proper bit extension)
+    // Merged nodes take precedence over original symbols with the same frequency
+    wire node6_lt_a = (freq_node6 < {3'b000, freq_a}) || (freq_node6 == {3'b000, freq_a} && 1'b1);
+    wire node6_lt_b = (freq_node6 < {3'b000, freq_b}) || (freq_node6 == {3'b000, freq_b} && 1'b1);
+    wire node6_lt_c = (freq_node6 < {3'b000, freq_c}) || (freq_node6 == {3'b000, freq_c} && 1'b1);
+    wire node6_lt_d = (freq_node6 < {3'b000, freq_d}) || (freq_node6 == {3'b000, freq_d} && 1'b1);
+    wire node6_lt_e = (freq_node6 < {3'b000, freq_e}) || (freq_node6 == {3'b000, freq_e} && 1'b1);
+    
+    // Helper function to check if a node is available in step 2
+    wire a_avail_step2 = available_nodes_step2[0];
+    wire b_avail_step2 = available_nodes_step2[1];
+    wire c_avail_step2 = available_nodes_step2[2];
+    wire d_avail_step2 = available_nodes_step2[3];
+    wire e_avail_step2 = available_nodes_step2[4];
+    wire node6_avail_step2 = available_nodes_step2[5];
+    
+    // Calculate rankings for step 2
+    wire [2:0] a_rank_step2 = a_avail_step2 ? (a_lt_b & b_avail_step2) + (a_lt_c & c_avail_step2) + 
+                             (a_lt_d & d_avail_step2) + (a_lt_e & e_avail_step2) + 
+                             (!node6_lt_a & node6_avail_step2) : 3'b111;
+                             
+    wire [2:0] b_rank_step2 = b_avail_step2 ? (b_lt_c & c_avail_step2) + (b_lt_d & d_avail_step2) + 
+                             (b_lt_e & e_avail_step2) + (!a_lt_b & a_avail_step2) + 
+                             (!node6_lt_b & node6_avail_step2) : 3'b111;
+                             
+    wire [2:0] c_rank_step2 = c_avail_step2 ? (c_lt_d & d_avail_step2) + (c_lt_e & e_avail_step2) + 
+                             (!a_lt_c & a_avail_step2) + (!b_lt_c & b_avail_step2) + 
+                             (!node6_lt_c & node6_avail_step2) : 3'b111;
+                             
+    wire [2:0] d_rank_step2 = d_avail_step2 ? (d_lt_e & e_avail_step2) + (!a_lt_d & a_avail_step2) + 
+                             (!b_lt_d & b_avail_step2) + (!c_lt_d & c_avail_step2) + 
+                             (!node6_lt_d & node6_avail_step2) : 3'b111;
+                             
+    wire [2:0] e_rank_step2 = e_avail_step2 ? (!a_lt_e & a_avail_step2) + (!b_lt_e & b_avail_step2) + 
+                             (!c_lt_e & c_avail_step2) + (!d_lt_e & d_avail_step2) + 
+                             (!node6_lt_e & node6_avail_step2) : 3'b111;
+                             
+    wire [2:0] node6_rank_step2 = node6_avail_step2 ? (node6_lt_a & a_avail_step2) + 
+                                 (node6_lt_b & b_avail_step2) + (node6_lt_c & c_avail_step2) + 
+                                 (node6_lt_d & d_avail_step2) + (node6_lt_e & e_avail_step2) : 3'b111;
+    
+    // Find the two smallest frequencies in step 2
+    assign smallest_idx_step2 = (a_rank_step2 == 3) ? 4'd0 :
+                               (b_rank_step2 == 3) ? 4'd1 :
+                               (c_rank_step2 == 3) ? 4'd2 :
+                               (d_rank_step2 == 3) ? 4'd3 :
+                               (e_rank_step2 == 3) ? 4'd4 : 4'd5;
 
-// Compare two nodes i, j to see which has "less" priority in the Huffman sense:
-//   1) smaller freq
-//   2) if tie, smaller "lowest leaf symbol"
-function bit lessOrEqual;  // returns 1 if i <= j in priority order
-   input [3:0] i, j;
-   reg [2:0] li, lj;
-begin
-   if (freq[i] < freq[j]) begin
-       lessOrEqual = 1'b1;
-   end
-   else if (freq[i] > freq[j]) begin
-       lessOrEqual = 1'b0;
-   end
-   else begin
-       // tie in freq => compare the lowest-leaf symbol
-       li = getLowestLeafSymbol(i);
-       lj = getLowestLeafSymbol(j);
-       if (li <= lj)
-           lessOrEqual = 1'b1;
-       else
-           lessOrEqual = 1'b0;
-   end
-end
-endfunction
+    assign second_smallest_idx_step2 = (a_rank_step2 == 2) ? 4'd0 :
+                                      (b_rank_step2 == 2) ? 4'd1 :
+                                      (c_rank_step2 == 2) ? 4'd2 :
+                                      (d_rank_step2 == 2) ? 4'd3 :
+                                      (e_rank_step2 == 2) ? 4'd4 : 4'd5;
+    
+    // Get the frequencies for the selected indices with proper bit width
+    assign smallest_freq_step2 = (smallest_idx_step2 == 4'd0) ? {3'b000, freq_a} :
+                                (smallest_idx_step2 == 4'd1) ? {3'b000, freq_b} :
+                                (smallest_idx_step2 == 4'd2) ? {3'b000, freq_c} :
+                                (smallest_idx_step2 == 4'd3) ? {3'b000, freq_d} :
+                                (smallest_idx_step2 == 4'd4) ? {3'b000, freq_e} : freq_node6;
+                                
+    assign second_smallest_freq_step2 = (second_smallest_idx_step2 == 4'd0) ? {3'b000, freq_a} :
+                                       (second_smallest_idx_step2 == 4'd1) ? {3'b000, freq_b} :
+                                       (second_smallest_idx_step2 == 4'd2) ? {3'b000, freq_c} :
+                                       (second_smallest_idx_step2 == 4'd3) ? {3'b000, freq_d} :
+                                       (second_smallest_idx_step2 == 4'd4) ? {3'b000, freq_e} : freq_node6;
+    
+    // Track which nodes were selected in step 2
+    assign smallest_nodes_step2[0] = (smallest_idx_step2 == 4'd0) || (second_smallest_idx_step2 == 4'd0);
+    assign smallest_nodes_step2[1] = (smallest_idx_step2 == 4'd1) || (second_smallest_idx_step2 == 4'd1);
+    assign smallest_nodes_step2[2] = (smallest_idx_step2 == 4'd2) || (second_smallest_idx_step2 == 4'd2);
+    assign smallest_nodes_step2[3] = (smallest_idx_step2 == 4'd3) || (second_smallest_idx_step2 == 4'd3);
+    assign smallest_nodes_step2[4] = (smallest_idx_step2 == 4'd4) || (second_smallest_idx_step2 == 4'd4);
+    assign smallest_nodes_step2[5] = (smallest_idx_step2 == 4'd5) || (second_smallest_idx_step2 == 4'd5);
+    assign smallest_nodes_step2[8:6] = 3'b000;
+    
+    // Merge the two smallest nodes to create node 7
+    assign freq_node7 = smallest_freq_step2 + second_smallest_freq_step2;
+    
+    // Store the children of node 7
+    assign node7_children = smallest_nodes_step2;
+    
+    // Update available nodes for step 3
+    assign available_nodes_step3 = (available_nodes_step2 & ~smallest_nodes_step2) | 9'b001000000;
+    
+    // Step 3: Find the two smallest frequencies among remaining nodes
+    wire [8:0] smallest_nodes_step3;
+    wire [7:0] smallest_freq_step3, second_smallest_freq_step3;
+    wire [3:0] smallest_idx_step3, second_smallest_idx_step3;
+    
+    // Compare node 7 with remaining nodes (with proper bit extension)
+    wire node7_lt_a = (freq_node7 < {3'b000, freq_a}) || (freq_node7 == {3'b000, freq_a} && 1'b1);
+    wire node7_lt_b = (freq_node7 < {3'b000, freq_b}) || (freq_node7 == {3'b000, freq_b} && 1'b1);
+    wire node7_lt_c = (freq_node7 < {3'b000, freq_c}) || (freq_node7 == {3'b000, freq_c} && 1'b1);
+    wire node7_lt_d = (freq_node7 < {3'b000, freq_d}) || (freq_node7 == {3'b000, freq_d} && 1'b1);
+    wire node7_lt_e = (freq_node7 < {3'b000, freq_e}) || (freq_node7 == {3'b000, freq_e} && 1'b1);
+    wire node7_lt_node6 = (freq_node7 < freq_node6) || (freq_node7 == freq_node6 && 1'b1);
+    
+    // Helper function to check if a node is available in step 3
+    wire a_avail_step3 = available_nodes_step3[0];
+    wire b_avail_step3 = available_nodes_step3[1];
+    wire c_avail_step3 = available_nodes_step3[2];
+    wire d_avail_step3 = available_nodes_step3[3];
+    wire e_avail_step3 = available_nodes_step3[4];
+    wire node6_avail_step3 = available_nodes_step3[5];
+    wire node7_avail_step3 = available_nodes_step3[6];
+    
+    // Calculate rankings for step 3
+    wire [2:0] a_rank_step3 = a_avail_step3 ? (a_lt_b & b_avail_step3) + (a_lt_c & c_avail_step3) + 
+                             (a_lt_d & d_avail_step3) + (a_lt_e & e_avail_step3) + 
+                             (!node6_lt_a & node6_avail_step3) + (!node7_lt_a & node7_avail_step3) : 3'b111;
+                             
+    wire [2:0] b_rank_step3 = b_avail_step3 ? (b_lt_c & c_avail_step3) + (b_lt_d & d_avail_step3) + 
+                             (b_lt_e & e_avail_step3) + (!a_lt_b & a_avail_step3) + 
+                             (!node6_lt_b & node6_avail_step3) + (!node7_lt_b & node7_avail_step3) : 3'b111;
+                             
+    wire [2:0] c_rank_step3 = c_avail_step3 ? (c_lt_d & d_avail_step3) + (c_lt_e & e_avail_step3) + 
+                             (!a_lt_c & a_avail_step3) + (!b_lt_c & b_avail_step3) + 
+                             (!node6_lt_c & node6_avail_step3) + (!node7_lt_c & node7_avail_step3) : 3'b111;
+                             
+    wire [2:0] d_rank_step3 = d_avail_step3 ? (d_lt_e & e_avail_step3) + (!a_lt_d & a_avail_step3) + 
+                             (!b_lt_d & b_avail_step3) + (!c_lt_d & c_avail_step3) + 
+                             (!node6_lt_d & node6_avail_step3) + (!node7_lt_d & node7_avail_step3) : 3'b111;
+                             
+    wire [2:0] e_rank_step3 = e_avail_step3 ? (!a_lt_e & a_avail_step3) + (!b_lt_e & b_avail_step3) + 
+                             (!c_lt_e & c_avail_step3) + (!d_lt_e & d_avail_step3) + 
+                             (!node6_lt_e & node6_avail_step3) + (!node7_lt_e & node7_avail_step3) : 3'b111;
+                             
+    wire [2:0] node6_rank_step3 = node6_avail_step3 ? (node6_lt_a & a_avail_step3) + 
+                                 (node6_lt_b & b_avail_step3) + (node6_lt_c & c_avail_step3) + 
+                                 (node6_lt_d & d_avail_step3) + (node6_lt_e & e_avail_step3) + 
+                                 (!node7_lt_node6 & node7_avail_step3) : 3'b111;
+                                 
+    wire [2:0] node7_rank_step3 = node7_avail_step3 ? (node7_lt_a & a_avail_step3) + 
+                                 (node7_lt_b & b_avail_step3) + (node7_lt_c & c_avail_step3) + 
+                                 (node7_lt_d & d_avail_step3) + (node7_lt_e & e_avail_step3) + 
+                                 (node7_lt_node6 & node6_avail_step3) : 3'b111;
+    
+    // Find the two smallest frequencies in step 3
+    assign smallest_idx_step3 = (a_rank_step3 == 2) ? 4'd0 :
+                               (b_rank_step3 == 2) ? 4'd1 :
+                               (c_rank_step3 == 2) ? 4'd2 :
+                               (d_rank_step3 == 2) ? 4'd3 :
+                               (e_rank_step3 == 2) ? 4'd4 :
+                               (node6_rank_step3 == 2) ? 4'd5 : 4'd6;
+                               
+    assign second_smallest_idx_step3 = (a_rank_step3 == 1) ? 4'd0 :
+                                      (b_rank_step3 == 1) ? 4'd1 :
+                                      (c_rank_step3 == 1) ? 4'd2 :
+                                      (d_rank_step3 == 1) ? 4'd3 :
+                                      (e_rank_step3 == 1) ? 4'd4 :
+                                      (node6_rank_step3 == 1) ? 4'd5 : 4'd6;
+    
+    // Get the frequencies for the selected indices with proper bit width
+    assign smallest_freq_step3 = (smallest_idx_step3 == 4'd0) ? {3'b000, freq_a} :
+                                (smallest_idx_step3 == 4'd1) ? {3'b000, freq_b} :
+                                (smallest_idx_step3 == 4'd2) ? {3'b000, freq_c} :
+                                (smallest_idx_step3 == 4'd3) ? {3'b000, freq_d} :
+                                (smallest_idx_step3 == 4'd4) ? {3'b000, freq_e} :
+                                (smallest_idx_step3 == 4'd5) ? freq_node6 : freq_node7;
+                                
+    assign second_smallest_freq_step3 = (second_smallest_idx_step3 == 4'd0) ? {3'b000, freq_a} :
+                                       (second_smallest_idx_step3 == 4'd1) ? {3'b000, freq_b} :
+                                       (second_smallest_idx_step3 == 4'd2) ? {3'b000, freq_c} :
+                                       (second_smallest_idx_step3 == 4'd3) ? {3'b000, freq_d} :
+                                       (second_smallest_idx_step3 == 4'd4) ? {3'b000, freq_e} :
+                                       (second_smallest_idx_step3 == 4'd5) ? freq_node6 : freq_node7;
+    
+    // Track which nodes were selected in step 3
+    assign smallest_nodes_step3[0] = (smallest_idx_step3 == 4'd0) || (second_smallest_idx_step3 == 4'd0);
+    assign smallest_nodes_step3[1] = (smallest_idx_step3 == 4'd1) || (second_smallest_idx_step3 == 4'd1);
+    assign smallest_nodes_step3[2] = (smallest_idx_step3 == 4'd2) || (second_smallest_idx_step3 == 4'd2);
+    assign smallest_nodes_step3[3] = (smallest_idx_step3 == 4'd3) || (second_smallest_idx_step3 == 4'd3);
+    assign smallest_nodes_step3[4] = (smallest_idx_step3 == 4'd4) || (second_smallest_idx_step3 == 4'd4);
+    assign smallest_nodes_step3[5] = (smallest_idx_step3 == 4'd5) || (second_smallest_idx_step3 == 4'd5);
+    assign smallest_nodes_step3[6] = (smallest_idx_step3 == 4'd6) || (second_smallest_idx_step3 == 4'd6);
+    assign smallest_nodes_step3[8:7] = 2'b00;
+    
+    // Merge the two smallest nodes to create node 8
+    assign freq_node8 = smallest_freq_step3 + second_smallest_freq_step3;
+    
+    // Store the children of node 8
+    assign node8_children = smallest_nodes_step3;
+    
+    // Update available nodes for step 4
+    assign available_nodes_step4 = (available_nodes_step3 & ~smallest_nodes_step3) | 9'b010000000;
+    
+    // Step 4: The final two nodes will be merged to form the root
+    wire [8:0] smallest_nodes_step4;
+    wire [7:0] smallest_freq_step4, second_smallest_freq_step4;
+    wire [3:0] smallest_idx_step4, second_smallest_idx_step4;
+    
+    // Compare node 8 with remaining nodes (with proper bit extension)
+    wire node8_lt_a = (freq_node8 < {3'b000, freq_a}) || (freq_node8 == {3'b000, freq_a} && 1'b1);
+    wire node8_lt_b = (freq_node8 < {3'b000, freq_b}) || (freq_node8 == {3'b000, freq_b} && 1'b1);
+    wire node8_lt_c = (freq_node8 < {3'b000, freq_c}) || (freq_node8 == {3'b000, freq_c} && 1'b1);
+    wire node8_lt_d = (freq_node8 < {3'b000, freq_d}) || (freq_node8 == {3'b000, freq_d} && 1'b1);
+    wire node8_lt_e = (freq_node8 < {3'b000, freq_e}) || (freq_node8 == {3'b000, freq_e} && 1'b1);
+    wire node8_lt_node6 = (freq_node8 < freq_node6) || (freq_node8 == freq_node6 && 1'b1);
+    wire node8_lt_node7 = (freq_node8 < freq_node7) || (freq_node8 == freq_node7 && 1'b1);
 
-// Find the two distinct active nodes with the smallest freq (with tie-break).
-// We will return indices min1, min2 such that min1 is the highest priority (lowest freq).
-task findTwoMin;
-   output [3:0] min1;
-   output [3:0] min2;
-   integer k;
-   reg [3:0] candidate [0:8];
-   integer count;
-begin
-   // Collect active nodes into an array 'candidate'.
-   count = 0;
-   for (k=0; k<9; k=k+1) begin
-       if (active[k] == 1'b1) begin
-          candidate[count] = k[3:0];
-          count = count + 1;
-       end
-   end
+    // Helper function to check if a node is available in step 4
+    wire a_avail_step4 = available_nodes_step4[0];
+    wire b_avail_step4 = available_nodes_step4[1];
+    wire c_avail_step4 = available_nodes_step4[2];
+    wire d_avail_step4 = available_nodes_step4[3];
+    wire e_avail_step4 = available_nodes_step4[4];
+    wire node6_avail_step4 = available_nodes_step4[5];
+    wire node7_avail_step4 = available_nodes_step4[6];
+    wire node8_avail_step4 = available_nodes_step4[7];
 
-   // We assume count >= 2 always during merges
-   // Initialize min1, min2 to the first two
-   // then do a small selection pass to find the top two.
-   min1 = candidate[0];
-   min2 = candidate[1];
-   // If needed, swap them so min1 is indeed "less" or equal in priority
-   if (!lessOrEqual(min1, min2)) begin
-       reg [3:0] tmp;
-       tmp = min1; 
-       min1 = min2; 
-       min2 = tmp;
-   end
+    // Calculate rankings for step 4
+    wire [2:0] a_rank_step4 = a_avail_step4 ? (a_lt_b & b_avail_step4) + (a_lt_c & c_avail_step4) + 
+                             (a_lt_d & d_avail_step4) + (a_lt_e & e_avail_step4) + 
+                             (!node6_lt_a & node6_avail_step4) + (!node7_lt_a & node7_avail_step4) + 
+                             (!node8_lt_a & node8_avail_step4) : 3'b111;
+    wire [2:0] b_rank_step4 = b_avail_step4 ? (b_lt_c & c_avail_step4) + (b_lt_d & d_avail_step4) + 
+                             (b_lt_e & e_avail_step4) + (!a_lt_b & a_avail_step4) + 
+                             (!node6_lt_b & node6_avail_step4) + (!node7_lt_b & node7_avail_step4) + 
+                             (!node8_lt_b & node8_avail_step4) : 3'b111;
+    wire [2:0] c_rank_step4 = c_avail_step4 ? (c_lt_d & d_avail_step4) + (c_lt_e & e_avail_step4) + 
+                             (!a_lt_c & a_avail_step4) + (!b_lt_c & b_avail_step4) + 
+                             (!node6_lt_c & node6_avail_step4) + (!node7_lt_c & node7_avail_step4) + 
+                             (!node8_lt_c & node8_avail_step4) : 3'b111;
+    wire [2:0] d_rank_step4 = d_avail_step4 ? (d_lt_e & e_avail_step4) + (!a_lt_d & a_avail_step4) + 
+                             (!b_lt_d & b_avail_step4) + (!c_lt_d & c_avail_step4) + 
+                             (!node6_lt_d & node6_avail_step4) + (!node7_lt_d & node7_avail_step4) + 
+                             (!node8_lt_d & node8_avail_step4) : 3'b111;
+    wire [2:0] e_rank_step4 = e_avail_step4 ? (!a_lt_e & a_avail_step4) + (!b_lt_e & b_avail_step4) + 
+                             (!c_lt_e & c_avail_step4) + (!d_lt_e & d_avail_step4) + 
+                             (!node6_lt_e & node6_avail_step4) + (!node7_lt_e & node7_avail_step4) + 
+                             (!node8_lt_e & node8_avail_step4) : 3'b111;
+    wire [2:0] node6_rank_step4 = node6_avail_step4 ? (node6_lt_a & a_avail_step4) + 
+                                 (node6_lt_b & b_avail_step4) + (node6_lt_c & c_avail_step4) + 
+                                 (node6_lt_d & d_avail_step4) + (node6_lt_e & e_avail_step4) + 
+                                 (!node7_lt_node6 & node7_avail_step4) + (!node8_lt_node6 & node8_avail_step4) : 3'b111;
+    wire [2:0] node7_rank_step4 = node7_avail_step4 ? (node7_lt_a & a_avail_step4) +
+                                 (node7_lt_b & b_avail_step4) + (node7_lt_c & c_avail_step4) +
+                                 (node7_lt_d & d_avail_step4) + (node7_lt_e & e_avail_step4) +
+                                 (node7_lt_node6 & node6_avail_step4) + (!node8_lt_node7 & node8_avail_step4) : 3'b111;
+    wire [2:0] node8_rank_step4 = node8_avail_step4 ? (node8_lt_a & a_avail_step4) +
+                                 (node8_lt_b & b_avail_step4) + (node8_lt_c & c_avail_step4) +
+                                 (node8_lt_d & d_avail_step4) + (node8_lt_e & e_avail_step4) +
+                                 (node8_lt_node6 & node6_avail_step4) + (node8_lt_node7 & node7_avail_step4) : 3'b111;
 
-   // Now check the rest
-   for (k=2; k<count; k=k+1) begin
-       if (lessOrEqual(candidate[k], min1)) begin
-           // new candidate is better than min1, so min2 becomes min1, min1 becomes candidate[k]
-           min2 = min1;
-           min1 = candidate[k];
-       end
-       else if (lessOrEqual(candidate[k], min2)) begin
-           // new candidate is better than min2 only
-           min2 = candidate[k];
-       end
-   end
-end
-endtask
+    // Find the two smallest frequencies in step 4
+    assign smallest_idx_step4 = (a_rank_step4 == 1) ? 4'd0 :
+                               (b_rank_step4 == 1) ? 4'd1 :
+                               (c_rank_step4 == 1) ? 4'd2 :
+                               (d_rank_step4 == 1) ? 4'd3 :
+                               (e_rank_step4 == 1) ? 4'd4 :
+                               (node6_rank_step4 == 1) ? 4'd5 :
+                               (node7_rank_step4 == 1) ? 4'd6 : 4'd7;
 
-// We use a local recursive function that returns both the code and the length
-// in up to 8 bits for safety, then we trim/left-pad to 4 bits.
-function [11:0] dfs; 
-    // return {found_flag, length, code_in_LSBs}
-    // found_flag = 1 bit
-    // length     = 4 bits
-    // code       = up to 7 bits in the LSB area
-    input [3:0] currentNode;
-    input [3:0] currentDepth;  // how many bits so far
-begin
-    // If this node is a leaf, check if it matches leafSym
-    if (currentNode < 5) begin
-        if (symbol[currentNode] == leafSym) begin
-        // Found it, code is 0 bits at this level
-        dfs = {1'b1, 4'd0, 7'b0}; 
-        end
-        else begin
-        dfs = {1'b0, 4'd0, 7'b0}; 
-        end
-    end
-    else begin
-        // Internal node: try left first
-        reg [11:0] leftResult, rightResult;
-        leftResult  = dfs(left[currentNode],  currentDepth+1);
-        if (leftResult[11]) begin
-            // found in left subtree => prepend bit '0'
-            // leftResult = {found_flag=1, length, codeLSBs}
-            // we add 1 to length, shift code << 1
-            // leftResult[10:7] is length, leftResult[6:0] is code
-            reg [3:0] newLen;
-            reg [6:0] newCode;
-            newLen  = leftResult[10:7] + 1;
-            newCode = (leftResult[6:0] << 1);  // add 0 in LSB
-            dfs = {1'b1, newLen, newCode};
-        end
-        else begin
-            // try right subtree => prepend bit '1'
-            rightResult = dfs(right[currentNode], currentDepth+1);
-            if (rightResult[11]) begin
-            // found in right subtree
-            reg [3:0] newLen;
-            reg [6:0] newCode;
-            newLen  = rightResult[10:7] + 1;
-            newCode = (rightResult[6:0] << 1) | 1'b1;
-            dfs = {1'b1, newLen, newCode};
-            end
-            else begin
-            // not found in either child
-            dfs = {1'b0, 4'd0, 7'b0};
-            end
-        end
-    end
-end
-endfunction
+    assign second_smallest_idx_step4 = (a_rank_step4 == 0) ? 4'd0 :
+                                      (b_rank_step4 == 0) ? 4'd1 :
+                                      (c_rank_step4 == 0) ? 4'd2 :
+                                      (d_rank_step4 == 0) ? 4'd3 :
+                                      (e_rank_step4 == 0) ? 4'd4 :
+                                      (node6_rank_step4 == 0) ? 4'd5 :
+                                      (node7_rank_step4 == 0) ? 4'd6 : 4'd7;
 
-// We now define a small function that, given a leaf symbol s (0..4),
-// searches from 'root' down to that leaf and returns a 4-bit code
-// (left=0, right=1). We do a depth-first search.  We also want to left-pad
-// to 4 bits if the code is shorter than 4 bits.  If we never find the symbol
-// (should not happen), we return 4'b0000.
-function [3:0] getCode4bit;
-   input [2:0]  leafSym;  // 0..4
-   input [3:0]  root;     // typically 8 after building the tree
+    // Get the frequencies for the selected indices with proper bit width
+    assign smallest_freq_step4 = (smallest_idx_step4 == 4'd0) ? {3'b000, freq_a} :
+                                (smallest_idx_step4 == 4'd1) ? {3'b000, freq_b} :
+                                (smallest_idx_step4 == 4'd2) ? {3'b000, freq_c} :
+                                (smallest_idx_step4 == 4'd3) ? {3'b000, freq_d} :
+                                (smallest_idx_step4 == 4'd4) ? {3'b000, freq_e} :
+                                (smallest_idx_step4 == 4'd5) ? freq_node6 :
+                                (smallest_idx_step4 == 4'd6) ? freq_node7 : freq_node8;
 
-   reg [11:0] result;
-   reg  found;
-   reg [3:0] length;
-   reg [6:0] codeLSBs;
-   reg [3:0] code4;
+    assign second_smallest_freq_step4 = (second_smallest_idx_step4 == 4'd0) ? {3'b000, freq_a} :
+                                       (second_smallest_idx_step4 == 4'd1) ? {3'b000, freq_b} :
+                                       (second_smallest_idx_step4 == 4'd2) ? {3'b000, freq_c} :
+                                       (second_smallest_idx_step4 == 4'd3) ? {3'b000, freq_d} :
+                                       (second_smallest_idx_step4 == 4'd4) ? {3'b000, freq_e} :
+                                       (second_smallest_idx_step4 == 4'd5) ? freq_node6 :
+                                       (second_smallest_idx_step4 == 4'd6) ? freq_node7 : freq_node8;
 
-begin
-   result = dfs(root, 4'd0);
-   found      = result[11];
-   length     = result[10:7];
-   codeLSBs   = result[6:0];   // code is in LSB side, length bits used
+    // Track which nodes were selected in step 4
+    assign smallest_nodes_step4[0] = (smallest_idx_step4 == 4'd0) || (second_smallest_idx_step4 == 4'd0);
+    assign smallest_nodes_step4[1] = (smallest_idx_step4 == 4'd1) || (second_smallest_idx_step4 == 4'd1);
+    assign smallest_nodes_step4[2] = (smallest_idx_step4 == 4'd2) || (second_smallest_idx_step4 == 4'd2);
+    assign smallest_nodes_step4[3] = (smallest_idx_step4 == 4'd3) || (second_smallest_idx_step4 == 4'd3);
+    assign smallest_nodes_step4[4] = (smallest_idx_step4 == 4'd4) || (second_smallest_idx_step4 == 4'd4);
+    assign smallest_nodes_step4[5] = (smallest_idx_step4 == 4'd5) || (second_smallest_idx_step4 == 4'd5);
+    assign smallest_nodes_step4[6] = (smallest_idx_step4 == 4'd6) || (second_smallest_idx_step4 == 4'd6);
+    assign smallest_nodes_step4[7] = (smallest_idx_step4 == 4'd7) || (second_smallest_idx_step4 == 4'd7);
+    assign smallest_nodes_step4[8] = 1'b0;
 
-   // If not found or length=0 => code = 0
-   if (!found || length==0) begin
-       getCode4bit = 4'b0000;
-   end
-   else if (length <= 4) begin
-       // The "rightmost length bits" of codeLSBs hold the code, from LSB up.
-       // We want to left-pad to 4 bits. So if length=3 and codeLSBs=011 for example,
-       // we want 4'b0011.
-       // Let's just mask out the bits, then shift them into the low side,
-       // then left-pad with zeros.
-       reg [3:0] temp;
-       temp = codeLSBs[3:0]; // take the lowest 4 bits
-       // but we only use 'length' bits from there. We'll just shift them left 
-       // so that they line up at the right edge.
-       // Actually, codeLSBs is already in the correct order (lowest bit is the first branch from root).
-       // So if length=3 => bits used are temp[2:0]. We'll do:
-       temp = temp & ((1 << length) - 1);
-       // Now place it in the rightmost 'length' bits of a 4-bit code.
-       // That means we do no shift. It's already in LSB side. We only need to ensure the upper bits are 0.
-       getCode4bit = temp;
-   end
-   else begin
-       // If length > 4, we just truncate the least significant 4 bits (or handle error).
-       // Typically with 5 symbols, max length is 4, but just in case:
-       getCode4bit = codeLSBs[3:0];
-   end
-end
-endfunction
-
-//////////////////////////////////////////////
-// The main combinational logic
-//////////////////////////////////////////////
-always @* begin : COMBINATIONAL_HUFFMAN
-    // 1) Extract input frequencies
-    // symbol_freq = { e[4:0], d[4:0], c[4:0], b[4:0], a[4:0] } from MSB to LSB
-    // i.e. a_freq = symbol_freq[4:0], b_freq = [9:5], etc.
-    reg [4:0] fa, fb, fc, fd, fe;
-    // fa = symbol_freq[ 4: 0];
-    // fb = symbol_freq[ 9: 5];
-    // fc = symbol_freq[14:10];
-    // fd = symbol_freq[19:15];
-    // fe = symbol_freq[24:20];
-    fa = symbol_freq[24:20];
-    fb = symbol_freq[19:15];
-    fc = symbol_freq[14:10];
-    fd = symbol_freq[ 9: 5];
-    fe = symbol_freq[ 4: 0];
-
-    // 2) Initialize all 9 nodes
-    for (i=0; i<9; i=i+1) begin
-        freq[i]   = 8'd0;
-        left[i]   = 4'hF;
-        right[i]  = 4'hF;
-        symbol[i] = 3'd7;  // 7 => internal
-        active[i] = 1'b0;
-    end
-
-    // Leaves: node0..4 => a..e
-    freq[0]   = fa;
-    symbol[0] = 3'd0;  // 'a'
-    active[0] = 1'b1;
-
-    freq[1]   = fb;
-    symbol[1] = 3'd1;  // 'b'
-    active[1] = 1'b1;
-
-    freq[2]   = fc;
-    symbol[2] = 3'd2;  // 'c'
-    active[2] = 1'b1;
-
-    freq[3]   = fd;
-    symbol[3] = 3'd3;  // 'd'
-    active[3] = 1'b1;
-
-    freq[4]   = fe;
-    symbol[4] = 3'd4;  // 'e'
-    active[4] = 1'b1;
-
-    // internal nodes: 5..8, freq=0, symbol=7, not active initially
-
-    // We'll do 4 merges, each time creating a new node #nextN
-    reg [3:0] nextN;
-    nextN = 5;
-
-    integer step;
-    for (step=0; step<4; step=step+1) begin
-        // find two min among active
-        reg [3:0] m1, m2;
-        findTwoMin(m1, m2);
-        // create new node nextN
-        // put the smaller in left, the bigger in right
-        if (lessOrEqual(m1, m2)) begin
-            left[nextN]  = m1;
-            right[nextN] = m2;
-        end
-        else begin
-            left[nextN]  = m2;
-            right[nextN] = m1;
-        end
-
-        freq[nextN]   = freq[m1] + freq[m2];
-        symbol[nextN] = 3'd7; // internal
-        active[m1]    = 1'b0;
-        active[m2]    = 1'b0;
-        active[nextN] = 1'b1;
-
-        nextN = nextN + 1; // increment for next internal node
-    end
-
-    // Now the only active node should be node 8 => the root
-    // 3) Retrieve the 4-bit code for each leaf
-    reg [3:0] code_a, code_b, code_c, code_d, code_e;
-    code_a = getCode4bit(3'd0, 8); // symbol=0 => 'a'
-    code_b = getCode4bit(3'd1, 8); // symbol=1 => 'b'
-    code_c = getCode4bit(3'd2, 8); // 'c'
-    code_d = getCode4bit(3'd3, 8); // 'd'
-    code_e = getCode4bit(3'd4, 8); // 'e'
-
-    // 4) Concatenate them into 20 bits: a in [3:0], b in [7:4], c in [11:8], d in [15:12], e in [19:16]
-    // out_encoded = {code_e, code_d, code_c, code_b, code_a};
-    out_encoded = {code_a, code_b, code_c, code_d, code_e};
-end
-
+    // At this point, there should be exactly two nodes available
+    // Since we've been merging pairs of nodes, the only ones left are the last two
+    wire [7:0] node9_freq = freq_node8 + 
+                           (available_nodes_step4[0] ? {3'b000, freq_a} : 8'b00000000) +
+                           (available_nodes_step4[1] ? {3'b000, freq_b} : 8'b00000000) +
+                           (available_nodes_step4[2] ? {3'b000, freq_c} : 8'b00000000) +
+                           (available_nodes_step4[3] ? {3'b000, freq_d} : 8'b00000000) +
+                           (available_nodes_step4[4] ? {3'b000, freq_e} : 8'b00000000) +
+                           (available_nodes_step4[5] ? freq_node6 : 8'b00000000) +
+                           (available_nodes_step4[6] ? freq_node7 : 8'b00000000);
+    
+    // Store the children of node 9 (root)
+    assign node9_children = available_nodes_step4;
+    
+    // Now, traverse the tree to compute the codes for each symbol
+    
+    // FIXME: a bit weird here, check the commented code later
+    // First, determine if each symbol is a left or right child of its parent
+    // wire a_is_left_of_node6 = node6_children[0] && (smallest_idx_step1 == 0 || 
+    //                          (second_smallest_idx_step1 == 0 && smallest_idx_step1 < second_smallest_idx_step1));
+    // wire b_is_left_of_node6 = node6_children[1] && (smallest_idx_step1 == 1 || 
+    //                          (second_smallest_idx_step1 == 1 && smallest_idx_step1 < second_smallest_idx_step1));
+    // wire c_is_left_of_node6 = node6_children[2] && (smallest_idx_step1 == 2 || 
+    //                          (second_smallest_idx_step1 == 2 && smallest_idx_step1 < second_smallest_idx_step1));
+    // wire d_is_left_of_node6 = node6_children[3] && (smallest_idx_step1 == 3 || 
+    //                          (second_smallest_idx_step1 == 3 && smallest_idx_step1 < second_smallest_idx_step1));
+    // wire e_is_left_of_node6 = node6_children[4] && (smallest_idx_step1 == 4 || 
+    //                          (second_smallest_idx_step1 == 4 && smallest_idx_step1 < second_smallest_idx_step1));
+    wire a_is_left_of_node6 = node6_children[0] && smallest_idx_step1 == 0;
+    wire b_is_left_of_node6 = node6_children[1] && smallest_idx_step1 == 1;
+    wire c_is_left_of_node6 = node6_children[2] && smallest_idx_step1 == 2;
+    wire d_is_left_of_node6 = node6_children[3] && smallest_idx_step1 == 3;
+    wire e_is_left_of_node6 = node6_children[4] && smallest_idx_step1 == 4;
+    
+    // wire a_is_left_of_node7 = node7_children[0] && (smallest_idx_step2 == 0 || 
+    //                          (second_smallest_idx_step2 == 0 && smallest_idx_step2 < second_smallest_idx_step2));
+    // wire b_is_left_of_node7 = node7_children[1] && (smallest_idx_step2 == 1 || 
+    //                          (second_smallest_idx_step2 == 1 && smallest_idx_step2 < second_smallest_idx_step2));
+    // wire c_is_left_of_node7 = node7_children[2] && (smallest_idx_step2 == 2 || 
+    //                          (second_smallest_idx_step2 == 2 && smallest_idx_step2 < second_smallest_idx_step2));
+    // wire d_is_left_of_node7 = node7_children[3] && (smallest_idx_step2 == 3 || 
+    //                          (second_smallest_idx_step2 == 3 && smallest_idx_step2 < second_smallest_idx_step2));
+    // wire e_is_left_of_node7 = node7_children[4] && (smallest_idx_step2 == 4 || 
+    //                          (second_smallest_idx_step2 == 4 && smallest_idx_step2 < second_smallest_idx_step2));
+    // wire node6_is_left_of_node7 = node7_children[5] && (smallest_idx_step2 == 5 || 
+    //                               (second_smallest_idx_step2 == 5 && smallest_idx_step2 < second_smallest_idx_step2));
+    wire a_is_left_of_node7 = node7_children[0] && (smallest_idx_step2 == 0);
+    wire b_is_left_of_node7 = node7_children[1] && (smallest_idx_step2 == 1);
+    wire c_is_left_of_node7 = node7_children[2] && (smallest_idx_step2 == 2);
+    wire d_is_left_of_node7 = node7_children[3] && (smallest_idx_step2 == 3);
+    wire e_is_left_of_node7 = node7_children[4] && (smallest_idx_step2 == 4);
+    wire node6_is_left_of_node7 = node7_children[5] && (smallest_idx_step2 == 5);
+    
+    // wire a_is_left_of_node8 = node8_children[0] && (smallest_idx_step3 == 0 || 
+                            //  (second_smallest_idx_step3 == 0 && smallest_idx_step3 < second_smallest_idx_step3));
+    // wire b_is_left_of_node8 = node8_children[1] && (smallest_idx_step3 == 1 || 
+                            //  (second_smallest_idx_step3 == 1 && smallest_idx_step3 < second_smallest_idx_step3));
+    // wire c_is_left_of_node8 = node8_children[2] && (smallest_idx_step3 == 2 || 
+                            //  (second_smallest_idx_step3 == 2 && smallest_idx_step3 < second_smallest_idx_step3));
+    // wire d_is_left_of_node8 = node8_children[3] && (smallest_idx_step3 == 3 || 
+                            //  (second_smallest_idx_step3 == 3 && smallest_idx_step3 < second_smallest_idx_step3));
+    // wire e_is_left_of_node8 = node8_children[4] && (smallest_idx_step3 == 4 || 
+                            //  (second_smallest_idx_step3 == 4 && smallest_idx_step3 < second_smallest_idx_step3));
+    // wire node6_is_left_of_node8 = node8_children[5] && (smallest_idx_step3 == 5 || 
+                                //   (second_smallest_idx_step3 == 5 && smallest_idx_step3 < second_smallest_idx_step3));
+    // wire node7_is_left_of_node8 = node8_children[6] && (smallest_idx_step3 == 6 || 
+                                //   (second_smallest_idx_step3 == 6 && smallest_idx_step3 < second_smallest_idx_step3));
+    wire a_is_left_of_node8 = node8_children[0] && (smallest_idx_step3 == 0);
+    wire b_is_left_of_node8 = node8_children[1] && (smallest_idx_step3 == 1);
+    wire c_is_left_of_node8 = node8_children[2] && (smallest_idx_step3 == 2);
+    wire d_is_left_of_node8 = node8_children[3] && (smallest_idx_step3 == 3);
+    wire e_is_left_of_node8 = node8_children[4] && (smallest_idx_step3 == 4);
+    wire node6_is_left_of_node8 = node8_children[5] && (smallest_idx_step3 == 5);
+    wire node7_is_left_of_node8 = node8_children[6] && (smallest_idx_step3 == 6);
+    
+    // FIXME: I don't know how to write the logic from this point on. PLS HELP
+    wire node8_is_left_of_node9 = node9_children[7] && node9_children[8:0] != 9'b000000000;
+    wire a_is_left_of_node9 = node9_children[0] && !node8_is_left_of_node9;
+    wire b_is_left_of_node9 = node9_children[1] && !node8_is_left_of_node9;
+    wire c_is_left_of_node9 = node9_children[2] && !node8_is_left_of_node9;
+    wire d_is_left_of_node9 = node9_children[3] && !node8_is_left_of_node9;
+    wire e_is_left_of_node9 = node9_children[4] && !node8_is_left_of_node9;
+    wire node6_is_left_of_node9 = node9_children[5] && !node8_is_left_of_node9;
+    wire node7_is_left_of_node9 = node9_children[6] && !node8_is_left_of_node9;
+    
+    // Compute the code and length for each symbol
+    // Code is built by traversing the tree from the root to the symbol
+    // 0 for left branch, 1 for right branch
+    
+    // Symbol 'a'
+    assign len_a = (node6_children[0] ? 1'b1 : 1'b0) +
+                  (node7_children[0] ? 1'b1 : 1'b0) +
+                  (node8_children[0] ? 1'b1 : 1'b0) +
+                  (node9_children[0] ? 1'b1 : 1'b0) +
+                  (node7_children[5] && node6_children[0] ? 1'b1 : 1'b0) +
+                  (node8_children[5] && node6_children[0] ? 1'b1 : 1'b0) +
+                  (node8_children[6] && node7_children[0] ? 1'b1 : 1'b0) +
+                  (node8_children[6] && node7_children[5] && node6_children[0] ? 1'b1 : 1'b0) +
+                  (node9_children[5] && node6_children[0] ? 1'b1 : 1'b0) +
+                  (node9_children[6] && node7_children[0] ? 1'b1 : 1'b0) +
+                  (node9_children[6] && node7_children[5] && node6_children[0] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[0] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[5] && node6_children[0] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[6] && node7_children[0] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[6] && node7_children[5] && node6_children[0] ? 1'b1 : 1'b0);
+                  
+    wire a_bit0 = a_is_left_of_node6 || a_is_left_of_node7 || a_is_left_of_node8 || a_is_left_of_node9 ? 1'b0 : 1'b1;
+    wire a_bit1 = (node6_children[0] && (node7_is_left_of_node8 || node7_is_left_of_node9)) ||
+                 (node7_children[0] && node8_is_left_of_node9) ||
+                 (a_is_left_of_node7 && node6_is_left_of_node8) ||
+                 (a_is_left_of_node8 && !(node6_is_left_of_node7 && node7_is_left_of_node8)) ? 1'b0 : 1'b1;
+    wire a_bit2 = (a_is_left_of_node6 && !(node7_children[5] && node8_is_left_of_node9) && !(node8_children[5])) ||
+                 (a_is_left_of_node7 && !(node8_children[6])) ||
+                 (a_is_left_of_node8 && !(node9_children[7])) ? 1'b0 : 1'b1;
+    wire a_bit3 = a_is_left_of_node6 && node7_children[5] && node8_children[6] && node9_children[7] ? 1'b0 : 1'b1;
+    
+    assign code_a = (len_a == 4'd1) ? {3'b000, a_bit0} :
+                   (len_a == 4'd2) ? {2'b00, a_bit0, a_bit1} :
+                   (len_a == 4'd3) ? {1'b0, a_bit0, a_bit1, a_bit2} :
+                   {a_bit0, a_bit1, a_bit2, a_bit3};
+    
+    // Symbol 'b' (similar logic as 'a')
+    assign len_b = (node6_children[1] ? 1'b1 : 1'b0) +
+                  (node7_children[1] ? 1'b1 : 1'b0) +
+                  (node8_children[1] ? 1'b1 : 1'b0) +
+                  (node9_children[1] ? 1'b1 : 1'b0) +
+                  (node7_children[5] && node6_children[1] ? 1'b1 : 1'b0) +
+                  (node8_children[5] && node6_children[1] ? 1'b1 : 1'b0) +
+                  (node8_children[6] && node7_children[1] ? 1'b1 : 1'b0) +
+                  (node8_children[6] && node7_children[5] && node6_children[1] ? 1'b1 : 1'b0) +
+                  (node9_children[5] && node6_children[1] ? 1'b1 : 1'b0) +
+                  (node9_children[6] && node7_children[1] ? 1'b1 : 1'b0) +
+                  (node9_children[6] && node7_children[5] && node6_children[1] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[1] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[5] && node6_children[1] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[6] && node7_children[1] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[6] && node7_children[5] && node6_children[1] ? 1'b1 : 1'b0);
+                  
+    wire b_bit0 = b_is_left_of_node6 || b_is_left_of_node7 || b_is_left_of_node8 || b_is_left_of_node9 ? 1'b0 : 1'b1;
+    wire b_bit1 = (node6_children[1] && (node7_is_left_of_node8 || node7_is_left_of_node9)) ||
+                 (node7_children[1] && node8_is_left_of_node9) ||
+                 (b_is_left_of_node7 && node6_is_left_of_node8) ||
+                 (b_is_left_of_node8 && !(node6_is_left_of_node7 && node7_is_left_of_node8)) ? 1'b0 : 1'b1;
+    wire b_bit2 = (b_is_left_of_node6 && !(node7_children[5] && node8_is_left_of_node9) && !(node8_children[5])) ||
+                 (b_is_left_of_node7 && !(node8_children[6])) ||
+                 (b_is_left_of_node8 && !(node9_children[7])) ? 1'b0 : 1'b1;
+    wire b_bit3 = b_is_left_of_node6 && node7_children[5] && node8_children[6] && node9_children[7] ? 1'b0 : 1'b1;
+    
+    assign code_b = (len_b == 4'd1) ? {3'b000, b_bit0} :
+                   (len_b == 4'd2) ? {2'b00, b_bit0, b_bit1} :
+                   (len_b == 4'd3) ? {1'b0, b_bit0, b_bit1, b_bit2} :
+                   {b_bit0, b_bit1, b_bit2, b_bit3};
+    
+    // Symbol 'c' (similar logic)
+    assign len_c = (node6_children[2] ? 1'b1 : 1'b0) +
+                  (node7_children[2] ? 1'b1 : 1'b0) +
+                  (node8_children[2] ? 1'b1 : 1'b0) +
+                  (node9_children[2] ? 1'b1 : 1'b0) +
+                  (node7_children[5] && node6_children[2] ? 1'b1 : 1'b0) +
+                  (node8_children[5] && node6_children[2] ? 1'b1 : 1'b0) +
+                  (node8_children[6] && node7_children[2] ? 1'b1 : 1'b0) +
+                  (node8_children[6] && node7_children[5] && node6_children[2] ? 1'b1 : 1'b0) +
+                  (node9_children[5] && node6_children[2] ? 1'b1 : 1'b0) +
+                  (node9_children[6] && node7_children[2] ? 1'b1 : 1'b0) +
+                  (node9_children[6] && node7_children[5] && node6_children[2] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[2] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[5] && node6_children[2] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[6] && node7_children[2] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[6] && node7_children[5] && node6_children[2] ? 1'b1 : 1'b0);
+                  
+    wire c_bit0 = c_is_left_of_node6 || c_is_left_of_node7 || c_is_left_of_node8 || c_is_left_of_node9 ? 1'b0 : 1'b1;
+    wire c_bit1 = (node6_children[2] && (node7_is_left_of_node8 || node7_is_left_of_node9)) ||
+                 (node7_children[2] && node8_is_left_of_node9) ||
+                 (c_is_left_of_node7 && node6_is_left_of_node8) ||
+                 (c_is_left_of_node8 && !(node6_is_left_of_node7 && node7_is_left_of_node8)) ? 1'b0 : 1'b1;
+    wire c_bit2 = (c_is_left_of_node6 && !(node7_children[5] && node8_is_left_of_node9) && !(node8_children[5])) ||
+                 (c_is_left_of_node7 && !(node8_children[6])) ||
+                 (c_is_left_of_node8 && !(node9_children[7])) ? 1'b0 : 1'b1;
+    wire c_bit3 = c_is_left_of_node6 && node7_children[5] && node8_children[6] && node9_children[7] ? 1'b0 : 1'b1;
+    
+    assign code_c = (len_c == 4'd1) ? {3'b000, c_bit0} :
+                   (len_c == 4'd2) ? {2'b00, c_bit0, c_bit1} :
+                   (len_c == 4'd3) ? {1'b0, c_bit0, c_bit1, c_bit2} :
+                   {c_bit0, c_bit1, c_bit2, c_bit3};
+    
+    // Symbol 'd' (similar logic)
+    assign len_d = (node6_children[3] ? 1'b1 : 1'b0) +
+                  (node7_children[3] ? 1'b1 : 1'b0) +
+                  (node8_children[3] ? 1'b1 : 1'b0) +
+                  (node9_children[3] ? 1'b1 : 1'b0) +
+                  (node7_children[5] && node6_children[3] ? 1'b1 : 1'b0) +
+                  (node8_children[5] && node6_children[3] ? 1'b1 : 1'b0) +
+                  (node8_children[6] && node7_children[3] ? 1'b1 : 1'b0) +
+                  (node8_children[6] && node7_children[5] && node6_children[3] ? 1'b1 : 1'b0) +
+                  (node9_children[5] && node6_children[3] ? 1'b1 : 1'b0) +
+                  (node9_children[6] && node7_children[3] ? 1'b1 : 1'b0) +
+                  (node9_children[6] && node7_children[5] && node6_children[3] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[3] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[5] && node6_children[3] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[6] && node7_children[3] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[6] && node7_children[5] && node6_children[3] ? 1'b1 : 1'b0);
+                  
+    wire d_bit0 = d_is_left_of_node6 || d_is_left_of_node7 || d_is_left_of_node8 || d_is_left_of_node9 ? 1'b0 : 1'b1;
+    wire d_bit1 = (node6_children[3] && (node7_is_left_of_node8 || node7_is_left_of_node9)) ||
+                 (node7_children[3] && node8_is_left_of_node9) ||
+                 (d_is_left_of_node7 && node6_is_left_of_node8) ||
+                 (d_is_left_of_node8 && !(node6_is_left_of_node7 && node7_is_left_of_node8)) ? 1'b0 : 1'b1;
+    wire d_bit2 = (d_is_left_of_node6 && !(node7_children[5] && node8_is_left_of_node9) && !(node8_children[5])) ||
+                 (d_is_left_of_node7 && !(node8_children[6])) ||
+                 (d_is_left_of_node8 && !(node9_children[7])) ? 1'b0 : 1'b1;
+    wire d_bit3 = d_is_left_of_node6 && node7_children[5] && node8_children[6] && node9_children[7] ? 1'b0 : 1'b1;
+    
+    assign code_d = (len_d == 4'd1) ? {3'b000, d_bit0} :
+                   (len_d == 4'd2) ? {2'b00, d_bit0, d_bit1} :
+                   (len_d == 4'd3) ? {1'b0, d_bit0, d_bit1, d_bit2} :
+                   {d_bit0, d_bit1, d_bit2, d_bit3};
+    
+    // Symbol 'e' (similar logic)
+    assign len_e = (node6_children[4] ? 1'b1 : 1'b0) +
+                  (node7_children[4] ? 1'b1 : 1'b0) +
+                  (node8_children[4] ? 1'b1 : 1'b0) +
+                  (node9_children[4] ? 1'b1 : 1'b0) +
+                  (node7_children[5] && node6_children[4] ? 1'b1 : 1'b0) +
+                  (node8_children[5] && node6_children[4] ? 1'b1 : 1'b0) +
+                  (node8_children[6] && node7_children[4] ? 1'b1 : 1'b0) +
+                  (node8_children[6] && node7_children[5] && node6_children[4] ? 1'b1 : 1'b0) +
+                  (node9_children[5] && node6_children[4] ? 1'b1 : 1'b0) +
+                  (node9_children[6] && node7_children[4] ? 1'b1 : 1'b0) +
+                  (node9_children[6] && node7_children[5] && node6_children[4] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[4] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[5] && node6_children[4] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[6] && node7_children[4] ? 1'b1 : 1'b0) +
+                  (node9_children[7] && node8_children[6] && node7_children[5] && node6_children[4] ? 1'b1 : 1'b0);
+                  
+    wire e_bit0 = e_is_left_of_node6 || e_is_left_of_node7 || e_is_left_of_node8 || e_is_left_of_node9 ? 1'b0 : 1'b1;
+    wire e_bit1 = (node6_children[4] && (node7_is_left_of_node8 || node7_is_left_of_node9)) ||
+                 (node7_children[4] && node8_is_left_of_node9) ||
+                 (e_is_left_of_node7 && node6_is_left_of_node8) ||
+                 (e_is_left_of_node8 && !(node6_is_left_of_node7 && node7_is_left_of_node8)) ? 1'b0 : 1'b1;
+    wire e_bit2 = (e_is_left_of_node6 && !(node7_children[5] && node8_is_left_of_node9) && !(node8_children[5])) ||
+                 (e_is_left_of_node7 && !(node8_children[6])) ||
+                 (e_is_left_of_node8 && !(node9_children[7])) ? 1'b0 : 1'b1;
+    wire e_bit3 = e_is_left_of_node6 && node7_children[5] && node8_children[6] && node9_children[7] ? 1'b0 : 1'b1;
+    
+    assign code_e = (len_e == 4'd1) ? {3'b000, e_bit0} :
+                   (len_e == 4'd2) ? {2'b00, e_bit0, e_bit1} :
+                   (len_e == 4'd3) ? {1'b0, e_bit0, e_bit1, e_bit2} :
+                   {e_bit0, e_bit1, e_bit2, e_bit3};
+                   
+    // Concatenate the codes in the order a to e
+    assign out_encoded = {code_a, code_b, code_c, code_d, code_e};
+    
 endmodule
