@@ -417,14 +417,18 @@ module HF(
     // We need to figure out the path by checking which nodes have the symbol as a child
     
     // First determine the path lengths
-    wire [3:0] len_a = node9_children[0] + node8_children[0] + node7_children[0] + node6_children[0];
-    wire [3:0] len_b = node9_children[1] + node8_children[1] + node7_children[1] + node6_children[1];
-    wire [3:0] len_c = node9_children[2] + node8_children[2] + node7_children[2] + node6_children[2];
-    wire [3:0] len_d = node9_children[3] + node8_children[3] + node7_children[3] + node6_children[3];
-    wire [3:0] len_e = node9_children[4] + node8_children[4] + node7_children[4] + node6_children[4];
-    
+    // wire [3:0] len_a = node9_children[0] + node8_children[0] + node7_children[0] + node6_children[0];
+    // wire [3:0] len_b = node9_children[1] + node8_children[1] + node7_children[1] + node6_children[1];
+    // wire [3:0] len_c = node9_children[2] + node8_children[2] + node7_children[2] + node6_children[2];
+    // wire [3:0] len_d = node9_children[3] + node8_children[3] + node7_children[3] + node6_children[3];
+    // wire [3:0] len_e = node9_children[4] + node8_children[4] + node7_children[4] + node6_children[4];
+    assign len_a = node9_children[0] + node8_children[0] + node7_children[0] + node6_children[0];
+    assign len_b = node9_children[1] + node8_children[1] + node7_children[1] + node6_children[1];
+    assign len_c = node9_children[2] + node8_children[2] + node7_children[2] + node6_children[2];
+    assign len_d = node9_children[3] + node8_children[3] + node7_children[3] + node6_children[3];
+    assign len_e = node9_children[4] + node8_children[4] + node7_children[4] + node6_children[4];
+
     // Symbol 'a'
-    wire [3:0] code_a;
     assign code_a = 
         // Direct child of node9
         (node9_children[0]) ? 
@@ -492,7 +496,6 @@ module HF(
         4'b0000;
         
     // Symbol 'b' (similar approach as 'a')
-    wire [3:0] code_b;
     assign code_b = 
         // Direct child of node9
         (node9_children[1]) ? 
@@ -560,7 +563,6 @@ module HF(
         4'b0000;
         
     // Symbol 'c' (similar approach)
-    wire [3:0] code_c;
     assign code_c = 
         // Direct child of node9
         (node9_children[2]) ? 
@@ -628,7 +630,6 @@ module HF(
         4'b0000;
         
     // Symbol 'd' (similar approach)
-    wire [3:0] code_d;
     assign code_d = 
         // Direct child of node9
         (node9_children[3]) ? 
@@ -696,7 +697,6 @@ module HF(
         4'b0000;
         
     // Symbol 'e' (similar approach)
-    wire [3:0] code_e;
     assign code_e = 
         // Direct child of node9
         (node9_children[4]) ? 
@@ -762,7 +762,7 @@ module HF(
                 (e_is_left_of_node6 ? 4'b0010 : 4'b0011)) :
         // Default case
         4'b0000;
-                   
+
     // Concatenate the codes in the order a to e
     assign out_encoded = {code_a, code_b, code_c, code_d, code_e};
     
