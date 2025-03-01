@@ -1,4 +1,6 @@
-# 忽略模擬輸出
+# 
+
+# simulation output files
 *.fsdb
 *.vpd
 *.vcd
@@ -12,7 +14,7 @@
 *.pvl
 *.mr
 
-# 忽略合成、APR 產生的檔案
+# synthesis and APR output files
 *.ddc
 *.sdf
 *.sdc
@@ -26,7 +28,7 @@
 *.capTbl
 *.map
 
-# 忽略 Verilog 編譯暫存檔
+# verilog compilation intermediate files
 simv*
 csrc/
 xcelium.d/
@@ -35,9 +37,9 @@ alib-52/
 xrun.history
 *.so
 
-# 忽略 Design Compiler、PrimeTime、Innovus 產物
-Netlist/*
-Report/*
+# Design Compiler、PrimeTime、Innovus output files
+02_SYN/Netlist/*
+02_SYN/Report/*
 timingReports/*
 extLogDir/
 StreamOut/
@@ -45,23 +47,23 @@ DBS/
 *.rpt
 *.log
 
-# 忽略 verdi / nWave 產生的檔案
+# verdi / nWave output files
 nWaveLog/
 verdiLog/
 *.vcs.*
 
-# 忽略 make clean 產生的刪除目標
+# make clean target
 *.o
 *.bin
 *.chk
 *.globals
 checkDesign/
 
-# 忽略 system 相關檔案
+# system files
 .DS_Store
 Thumbs.db
 
-# 確保不忽略 Verilog 代碼
+# make sure to keep the following files
 !*.v
 !*.sv
 !*.f

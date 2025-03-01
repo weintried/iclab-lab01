@@ -417,11 +417,6 @@ module HF(
     // We need to figure out the path by checking which nodes have the symbol as a child
     
     // First determine the path lengths
-    // wire [3:0] len_a = node9_children[0] + node8_children[0] + node7_children[0] + node6_children[0];
-    // wire [3:0] len_b = node9_children[1] + node8_children[1] + node7_children[1] + node6_children[1];
-    // wire [3:0] len_c = node9_children[2] + node8_children[2] + node7_children[2] + node6_children[2];
-    // wire [3:0] len_d = node9_children[3] + node8_children[3] + node7_children[3] + node6_children[3];
-    // wire [3:0] len_e = node9_children[4] + node8_children[4] + node7_children[4] + node6_children[4];
     assign len_a = node9_children[0] + node8_children[0] + node7_children[0] + node6_children[0];
     assign len_b = node9_children[1] + node8_children[1] + node7_children[1] + node6_children[1];
     assign len_c = node9_children[2] + node8_children[2] + node7_children[2] + node6_children[2];
