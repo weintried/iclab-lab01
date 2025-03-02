@@ -1,0 +1,84 @@
+ 
+****************************************
+Report : port
+Design : HF
+Version: T-2022.03
+Date   : Sat Mar  1 20:07:54 2025
+****************************************
+
+
+                       Pin      Wire     Max     Max     Connection
+Port           Dir     Load     Load     Trans   Cap     Class      Attrs
+--------------------------------------------------------------------------------
+symbol_freq[0] in      0.0000   0.0000   --      --      --         
+symbol_freq[1] in      0.0000   0.0000   --      --      --         
+symbol_freq[2] in      0.0000   0.0000   --      --      --         
+symbol_freq[3] in      0.0000   0.0000   --      --      --         
+symbol_freq[4] in      0.0000   0.0000   --      --      --         
+symbol_freq[5] in      0.0000   0.0000   --      --      --         
+symbol_freq[6] in      0.0000   0.0000   --      --      --         
+symbol_freq[7] in      0.0000   0.0000   --      --      --         
+symbol_freq[8] in      0.0000   0.0000   --      --      --         
+symbol_freq[9] in      0.0000   0.0000   --      --      --         
+symbol_freq[10]
+               in      0.0000   0.0000   --      --      --         
+symbol_freq[11]
+               in      0.0000   0.0000   --      --      --         
+symbol_freq[12]
+               in      0.0000   0.0000   --      --      --         
+symbol_freq[13]
+               in      0.0000   0.0000   --      --      --         
+symbol_freq[14]
+               in      0.0000   0.0000   --      --      --         
+symbol_freq[15]
+               in      0.0000   0.0000   --      --      --         
+symbol_freq[16]
+               in      0.0000   0.0000   --      --      --         
+symbol_freq[17]
+               in      0.0000   0.0000   --      --      --         
+symbol_freq[18]
+               in      0.0000   0.0000   --      --      --         
+symbol_freq[19]
+               in      0.0000   0.0000   --      --      --         
+symbol_freq[20]
+               in      0.0000   0.0000   --      --      --         
+symbol_freq[21]
+               in      0.0000   0.0000   --      --      --         
+symbol_freq[22]
+               in      0.0000   0.0000   --      --      --         
+symbol_freq[23]
+               in      0.0000   0.0000   --      --      --         
+symbol_freq[24]
+               in      0.0000   0.0000   --      --      --         
+out_encoded[0] out     0.0500   0.0000   --      --      --         
+out_encoded[1] out     0.0500   0.0000   --      --      --         
+out_encoded[2] out     0.0500   0.0000   --      --      --         
+out_encoded[3] out     0.0500   0.0000   --      --      --         
+out_encoded[4] out     0.0500   0.0000   --      --      --         
+out_encoded[5] out     0.0500   0.0000   --      --      --         
+out_encoded[6] out     0.0500   0.0000   --      --      --         
+out_encoded[7] out     0.0500   0.0000   --      --      --         
+out_encoded[8] out     0.0500   0.0000   --      --      --         
+out_encoded[9] out     0.0500   0.0000   --      --      --         
+out_encoded[10]
+               out     0.0500   0.0000   --      --      --         
+out_encoded[11]
+               out     0.0500   0.0000   --      --      --         
+out_encoded[12]
+               out     0.0500   0.0000   --      --      --         
+out_encoded[13]
+               out     0.0500   0.0000   --      --      --         
+out_encoded[14]
+               out     0.0500   0.0000   --      --      --         
+out_encoded[15]
+               out     0.0500   0.0000   --      --      --         
+out_encoded[16]
+               out     0.0500   0.0000   --      --      --         
+out_encoded[17]
+               out     0.0500   0.0000   --      --      --         
+out_encoded[18]
+               out     0.0500   0.0000   --      --      --         
+out_encoded[19]
+               out     0.0500   0.0000   --      --      --         
+
+1

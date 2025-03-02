@@ -1,0 +1,32 @@
+ 
+****************************************
+check_design summary:
+Version:     T-2022.03
+Date:        Sat Mar  1 20:05:57 2025
+****************************************
+
+                   Name                                            Total
+--------------------------------------------------------------------------------
+Cells                                                              18
+    Cells do not drive (LINT-1)                                    18
+--------------------------------------------------------------------------------
+
+Warning: In design 'HF', cell 'B_91' does not drive any nets. (LINT-1)
+Warning: In design 'HF', cell 'B_92' does not drive any nets. (LINT-1)
+Warning: In design 'HF', cell 'B_93' does not drive any nets. (LINT-1)
+Warning: In design 'HF', cell 'B_94' does not drive any nets. (LINT-1)
+Warning: In design 'HF', cell 'B_95' does not drive any nets. (LINT-1)
+Warning: In design 'HF', cell 'B_96' does not drive any nets. (LINT-1)
+Warning: In design 'HF', cell 'B_97' does not drive any nets. (LINT-1)
+Warning: In design 'HF', cell 'B_98' does not drive any nets. (LINT-1)
+Warning: In design 'HF', cell 'B_99' does not drive any nets. (LINT-1)
+Warning: In design 'HF', cell 'B_100' does not drive any nets. (LINT-1)
+Warning: In design 'HF', cell 'B_101' does not drive any nets. (LINT-1)
+Warning: In design 'HF', cell 'B_102' does not drive any nets. (LINT-1)
+Warning: In design 'HF', cell 'B_103' does not drive any nets. (LINT-1)
+Warning: In design 'HF', cell 'B_104' does not drive any nets. (LINT-1)
+Warning: In design 'HF', cell 'B_105' does not drive any nets. (LINT-1)
+Warning: In design 'HF', cell 'B_106' does not drive any nets. (LINT-1)
+Warning: In design 'HF', cell 'B_107' does not drive any nets. (LINT-1)
+Warning: In design 'HF', cell 'B_108' does not drive any nets. (LINT-1)
+1
